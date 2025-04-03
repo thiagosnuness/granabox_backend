@@ -27,6 +27,7 @@ class ItemSchema(BaseModel):
         due_status (str):The due status('VENCIDO', 'VENCE HOJE', 'A VENCER').
         transaction_date (datetime): The date and time when the item was
         created or last modified.
+        user_id (str): The Auth0 user ID (sub) who owns the item.
         label_id (int): The ID of the label associated with the item.
     """
 
@@ -65,6 +66,9 @@ class ItemSchema(BaseModel):
         ...,
         description="The date and time the item was created or last modified.",
     )
+    user_id: str = Field(
+        ..., description="The Auth0 user ID (sub) who owns the item."
+    )
     label_id: int = Field(
         ..., description="The ID of the label associated with the item."
     )
@@ -82,6 +86,7 @@ class ItemSchema(BaseModel):
                 "due_date": datetime.now(local_tz).strftime("%Y-%m-%d"),
                 "due_status": "VENCE HOJE",
                 "transaction_date": utc_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "user_id": "auth0|63ab1c6f7a8a3f0012345678",
                 "label": "Habitação",
                 "label_id": 1,
             }
@@ -171,6 +176,7 @@ class GetItemByDateSchema(BaseModel):
                 "due_date": datetime.now(local_tz).strftime("%Y-%m-%d"),
                 "due_status": "VENCE HOJE",
                 "transaction_date": utc_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "user_id": "auth0|63ab1c6f7a8a3f0012345678",
                 "label": "Habitação",
                 "label_id": 1,
             }

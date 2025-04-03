@@ -1,5 +1,6 @@
 from flask_openapi3 import Tag
 from flask import jsonify, request
+import jwt
 
 from app import app
 from api import db
@@ -69,10 +70,20 @@ def add_label(form: AddLabelSchema):
     # Fetch query parameters
     form = request.form
 
+    # Extract user_id from token (or fallback to 'public' and default label)
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+
     # Validate and convert 'is_default' value
     is_default_value = form.get("is_default", "false").lower()
     if is_default_value in ["true"]:
         is_default = True
+        user_id = "public"
     elif is_default_value in ["false"]:
         is_default = False
     else:
@@ -105,8 +116,12 @@ def add_label(form: AddLabelSchema):
             400,
         )
 
-    # Create the new label
-    new_label = Label(name=form.get("name"), is_default=is_default)
+    # Create the new label, linking it to the authenticated user
+    new_label = Label(
+        name=form.get("name"),
+        is_default=is_default,
+        user_id=user_id
+    )
     db.session.add(new_label)
     db.session.commit()
     return jsonify(new_label.to_dict()), 201
@@ -132,9 +147,21 @@ def get_labels():
     """
     Retrieves all labels (default and custom) from the database.
 
-    Returns a complete list of labels, including the details of each label.
+    Returns only the labels that belong to the current user,
+    or are publicly available ('public').
     """
-    labels = Label.query.all()
+    # Extract user_id from token (or fallback to 'public' and default label)
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+
+    # Query labels that belong to the current user or are public
+    labels = Label.query.filter(Label.user_id.in_([user_id, "public"])).all()
+
     return jsonify([label.to_dict() for label in labels]), 200
 
 
@@ -160,6 +187,14 @@ def get_labels():
                 }
             },
         },
+        "403": {
+            "description": "Access denied. Label does not belong to the user.",
+            "content": {
+                "application/json": {
+                    "schema": ValidationErrorSchema.model_json_schema()
+                }
+            },
+        },
         "422": {
             "description": "Unprocessable Entity",
             "content": {
@@ -174,10 +209,20 @@ def get_label(query: GetLabelByIDSchema):
     """
     Retrieve a specific label by ID.
 
-    Returns the label details if found, or an error if not.
+    Returns the label details if found and belongs to the authenticated user,
+    or an error if not found or unauthorized.
     """
     # Fetch query parameters
     query = request.args
+
+    # Extract user_id from token (or fallback to 'public' and default label)
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
 
     # Fetch the label by ID from the query parameters (label_id is required)
     label_id = query.get("id")
@@ -193,6 +238,20 @@ def get_label(query: GetLabelByIDSchema):
             ),
             404,
         )
+
+    # Restrict access if label does not belong to the user or isn't public
+    if label.user_id not in [user_id, "public"]:
+        return (
+            jsonify(
+                {
+                    "loc": ["user_id"],
+                    "msg": "Access denied. Label does not belong to the user.",
+                    "type_": "access_denied",
+                }
+            ),
+            403,
+        )
+    
     return jsonify(label.to_dict()), 200
 
 
@@ -212,6 +271,14 @@ def get_label(query: GetLabelByIDSchema):
         },
         "400": {
             "description": "Validation error",
+            "content": {
+                "application/json": {
+                    "schema": ValidationErrorSchema.model_json_schema()
+                }
+            },
+        },
+        "403": {
+            "description": "Access denied. Label does not belong to the user.",
             "content": {
                 "application/json": {
                     "schema": ValidationErrorSchema.model_json_schema()
@@ -252,6 +319,15 @@ def edit_label(form: EditLabelSchema):
     # Fetch query parameters
     form = request.form
 
+    # Extract user_id from token (or fallback to 'public' and default label)
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+
     # Fetch the label by ID from the query parameters (label_id is required)
     label_id = form.get("id")
     label = Label.query.get(label_id)
@@ -266,6 +342,19 @@ def edit_label(form: EditLabelSchema):
             ),
             404,
         )
+    
+    # Restrict access if label does not belong to the user or isn't public
+    if label.user_id not in [user_id, "public"]:
+        return (
+            jsonify(
+                {
+                    "loc": ["user_id"],
+                    "msg": "Access denied. Label does not belong to the user.",
+                    "type_": "access_denied",
+                }
+            ),
+            403,
+        )
 
     # Update the optional fields if provided
     if form.get("is_default"):
@@ -274,6 +363,7 @@ def edit_label(form: EditLabelSchema):
         if is_default_value in ["true"]:
             is_default = True
             label.is_default = is_default
+            user_id = "public"
         elif is_default_value in ["false"]:
             is_default = False
             label.is_default = is_default
@@ -330,6 +420,14 @@ def edit_label(form: EditLabelSchema):
                 }
             },
         },
+        "403": {
+            "description": "Access denied. Label does not belong to the user.",
+            "content": {
+                "application/json": {
+                    "schema": ValidationErrorSchema.model_json_schema()
+                }
+            },
+        },
         "404": {
             "description": "Label not found",
             "content": {
@@ -353,9 +451,21 @@ def delete_label(query: DeleteLabelByIDSchema):
     Deletes a label by ID.
 
     Returns a success message if the label was removed.
+    Access is restricted to the owner of the label or public labels.
     """
     # Fetch query parameters
     query = request.args
+
+    # Extract user_id from token (or fallback to 'public' and default label)
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+
+
     # Fetch the label by ID from the query parameters (label_id is required)
     label_id = query.get("id")
     label = Label.query.get(label_id)
@@ -370,6 +480,20 @@ def delete_label(query: DeleteLabelByIDSchema):
             ),
             404,
         )
+    
+    # Restrict deletion if label does not belong to the user or isn't public
+    if label.user_id not in [user_id, "public"]:
+        return (
+            jsonify(
+                {
+                    "loc": ["user_id"],
+                    "msg": "Access denied. Label does not belong to the user.",
+                    "type_": "access_denied",
+                }
+            ),
+            403,
+        )
+
     db.session.delete(label)
     db.session.commit()
     return jsonify({"message": "Label deleted successfully"}), 200

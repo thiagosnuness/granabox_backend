@@ -10,6 +10,7 @@ class LabelSchema(BaseModel):
         id (int): Unique identifier for each label, generated automatically.
         name (str): The name of the label (e.g., 'Habitação', 'Saúde').
         is_default (bool): Indicates if the label is a default one or custom.
+        user_id (str): The user to whom this label belongs (or 'public').
     """
 
     id: int = Field(
@@ -27,10 +28,18 @@ class LabelSchema(BaseModel):
             "Indicates if the label is a default one (True) or custom (False)."
         ),
     )
+    user_id: str = Field(
+        ..., description="The user who owns this label (or 'public' if shared)."
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
-            "example": {"id": 1, "name": "Habitação", "is_default": False}
+            "example": {
+                "id": 1,
+                "name": "Habitação",
+                "is_default": False,
+                "user_id": "auth0|abc123"
+            }
         }
     )
 

@@ -3,6 +3,7 @@ from pytz import timezone
 
 from flask_openapi3 import Tag
 from flask import jsonify, request
+import jwt
 
 from app import app
 from api import db
@@ -77,6 +78,16 @@ def add_item(form: AddItemSchema):
     """
     # Fetch query parameters
     form = request.form
+    
+    # Extract user_id (sub) from token, fallback to 'public' via Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+
     # Check if all required parameters are present
     required_params = [
         "label_id",
@@ -191,6 +202,7 @@ def add_item(form: AddItemSchema):
         due_status=calculate_due_status(due_date, user_timezone, type),
         recurrence=recurrence_value,
         transaction_date=utc_time,
+        user_id=user_id  # Injected from token or fallback
     )
     db.session.add(new_item)
     db.session.commit()
@@ -216,8 +228,20 @@ def get_items():
     Searches all registered financial items.
 
     Returns a complete list of items, including the details of each item.
+    Filters the items by the user_id (Auth0 sub) extracted from the JWT token.
+    If no token is provided (e.g., via Swagger), defaults to 'public'.
     """
-    items = Item.query.all()
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+
+    # Query only items that belong to the authenticated user
+    items = Item.query.filter_by(user_id=user_id).all()
 
     # Fetch the user's timezone using pytz
     user_timezone = request.headers.get("TimeZone", "UTC")
@@ -261,6 +285,14 @@ def get_items():
                 }
             },
         },
+        "403": {
+            "description": "Access denied. Item does not belong to the user.",
+            "content": {
+            "application/json": {
+                "schema": ValidationErrorSchema.model_json_schema()
+                }
+            },
+        },
         "422": {
             "description": "Unprocessable Entity",
             "content": {
@@ -276,9 +308,19 @@ def get_item(query: GetItemByIDSchema):
     Searches for a specific financial item by ID.
 
     Returns the item details if found, or an error if not.
+    The item must belong to the user identified by the token.
     """
     # Fetch query parameters
     query = request.args
+
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
 
     # Fetch the item by ID from the query parameters (item_id is required)
     item_id = query.get("id")
@@ -293,6 +335,19 @@ def get_item(query: GetItemByIDSchema):
                 }
             ),
             404,
+        )
+    
+    # Ensure the item belongs to the authenticated user
+    if item.user_id != user_id:
+        return (
+            jsonify(
+                {
+                    "loc": ["user_id"],
+                    "msg": "Unauthorized to access this item",
+                    "type_": "access_denied",
+                }
+            ),
+            403,
         )
 
     # Fetch the user's timezone using pytz
@@ -358,7 +413,8 @@ def get_items_by_date(query: GetItemByDateSchema):
     by type.
 
     Returns a list of items filtered by year and month. If type is provided,
-    also filters by type.
+    also filters by type. Items are also filtered by user_id extracted
+    from the JWT token, or 'public' when tested via Swagger.
     """
     # Fetch query parameters
     query = request.args
@@ -378,10 +434,21 @@ def get_items_by_date(query: GetItemByDateSchema):
             ),
             400,
         )
+    
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
 
+    # Build query filtering by due date and user_id
     query = Item.query.filter(
         db.extract("year", Item.due_date) == year,
         db.extract("month", Item.due_date) == month,
+        Item.user_id == user_id  # Filter items belonging to the user
     )
 
     if item_type:
@@ -448,11 +515,29 @@ def get_years():
     Fetch the earliest and latest years for which items exist.
 
     Returns the minimum and maximum years based on the `due_date` item.
+    Only considers items that belong to the authenticated user.
     If there is no item, it defaults to the current year.
     """
-    # Query to get the minimum and maximum due date
-    min_date = db.session.query(db.func.min(Item.due_date)).scalar()
-    max_date = db.session.query(db.func.max(Item.due_date)).scalar()
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+
+    # Query to get the minimum and maximum due date for the user's items
+    min_date = (
+        db.session.query(db.func.min(Item.due_date))
+        .filter(Item.user_id == user_id)
+        .scalar()
+    )
+    max_date = (
+        db.session.query(db.func.max(Item.due_date))
+        .filter(Item.user_id == user_id)
+        .scalar()
+    )
 
     # Get the current year for fallback
     current_year = datetime.now().year
@@ -507,6 +592,8 @@ def get_dashboard_overview(query: GetDashboardOverviewSchema):
     and savings.
 
     Returns the total income, expenses, and the final balance.
+    Filters results by user_id (Auth0 sub) extracted from the JWT token.
+    Defaults to 'public' when tested via Swagger.
     """
     # Fetch query parameters
     query = request.args
@@ -514,23 +601,36 @@ def get_dashboard_overview(query: GetDashboardOverviewSchema):
     year = query.get("year")
     month = query.get("month")
 
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+    
+    # Calculate total income (type = 'Rendimentos') for the user
     total_income = (
         db.session.query(db.func.sum(Item.amount))
         .filter(
             Item.type == "Rendimentos",
             db.extract("month", Item.due_date) == month,
             db.extract("year", Item.due_date) == year,
+            Item.user_id == user_id
         )
         .scalar()
         or 0
     )
 
+    # Calculate total expenses (type = 'Pago') for the user
     total_expenses = (
         db.session.query(db.func.sum(Item.amount))
         .filter(
             Item.type == "Pago",
             db.extract("month", Item.due_date) == month,
             db.extract("year", Item.due_date) == year,
+            Item.user_id == user_id
         )
         .scalar()
         or 0
@@ -573,6 +673,14 @@ def get_dashboard_overview(query: GetDashboardOverviewSchema):
                 }
             },
         },
+        "403": {
+            "description": "Access denied. Item does not belong to the user.",
+            "content": {
+                "application/json": {
+                    "schema": ValidationErrorSchema.model_json_schema()
+                }
+            },
+        },
         "400": {
             "description": "Validation error",
             "content": {
@@ -596,10 +704,20 @@ def edit_item(form: EditItemSchema):
     Edits an existing financial item.
 
     Updates the item's data, including the type, description, amount,
-    due date, and recurrence.
+    due date, and recurrence. Only allows editing items that belong
+    to the authenticated user.
     """
     # Fetch query parameters
     form = request.form
+
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
 
     # Fetch the item by ID from the query parameters (item_id is required)
     item_id = form.get("id")
@@ -614,6 +732,19 @@ def edit_item(form: EditItemSchema):
                 }
             ),
             404,
+        )
+    
+    # Ensure the item belongs to the authenticated user
+    if item.user_id != user_id:
+        return (
+            jsonify(
+                {
+                    "loc": ["user_id"],
+                    "msg": "Unauthorized to edit this item",
+                    "type_": "access_denied",
+                }
+            ),
+            403,
         )
 
     # Fetch the label by ID if provided
@@ -739,6 +870,14 @@ def edit_item(form: EditItemSchema):
                 }
             },
         },
+        "403": {
+            "description": "Access denied. Item does not belong to the user.",
+            "content": {
+                "application/json": {
+                    "schema": ValidationErrorSchema.model_json_schema()
+                }
+            },
+        },
         "400": {
             "description": "Validation error",
             "content": {
@@ -761,11 +900,20 @@ def edit_item_status(form: EditItemStatusSchema):
     """
     Edits the status of an item (e.g. from 'A Pagar' to 'Pago').
 
-    Returns the updated item data, or an error if the item is not found
-    or if there is a validation error.
+    Returns the updated item data, or an error if the item is not found,
+    if it does not belong to the user, or if there is a validation error.
     """
     # Fetch query parameters
     form = request.form
+
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
 
     # Fetch the item by ID from the query parameters (item_id is required)
     item_id = form.get("id")
@@ -782,6 +930,19 @@ def edit_item_status(form: EditItemStatusSchema):
             404,
         )
 
+    # Ensure the item belongs to the authenticated user
+    if item.user_id != user_id:
+        return (
+            jsonify(
+                {
+                    "loc": ["user_id"],
+                    "msg": "Unauthorized to edit this item",
+                    "type_": "access_denied",
+                }
+            ),
+            403,
+        )
+    
     item.type = form.get("type")
 
     # Store transaction date in UTC
@@ -832,6 +993,14 @@ def edit_item_status(form: EditItemStatusSchema):
                 }
             },
         },
+        "403": {
+            "description": "Access denied. Item does not belong to the user.",
+            "content": {
+                "application/json": {
+                    "schema": ValidationErrorSchema.model_json_schema()
+                }
+            },
+        },
         "422": {
             "description": "Unprocessable Entity",
             "content": {
@@ -847,9 +1016,19 @@ def delete_item(query: DeleteItemByIDSchema):
     Removes a specific financial item by ID.
 
     Returns a success message if the item was removed.
+    Only allows deletion if the item belongs to the authenticated user.
     """
     # Fetch query parameters
     query = request.args
+
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
 
     # Fetch the item by ID from the query parameters (item_id is required)
     item_id = query.get("id")
@@ -864,6 +1043,19 @@ def delete_item(query: DeleteItemByIDSchema):
                 }
             ),
             404,
+        )
+    
+    # Ensure the item belongs to the authenticated user
+    if item.user_id != user_id:
+        return (
+            jsonify(
+                {
+                    "loc": ["user_id"],
+                    "msg": "Unauthorized to delete this item",
+                    "type_": "access_denied",
+                }
+            ),
+            403,
         )
 
     db.session.delete(item)

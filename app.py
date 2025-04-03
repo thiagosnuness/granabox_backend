@@ -2,11 +2,15 @@ import os
 
 from flask_openapi3 import OpenAPI, Info, Tag
 from flask_cors import CORS
+from dotenv import load_dotenv
 
 from api import db
 from api.schemas.error_schema import ValidationErrorSchema
 from error_handlers import register_error_handlers
 
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Swagger Configuration
 info = Info(
@@ -51,6 +55,8 @@ from api.routes.home_routes import *
 from api.routes.label_routes import *
 from api.routes.item_routes import *
 from api.routes.recurrence_routes import *
+from api.routes.user_routes import *
+from api.routes.auth_config_routes import *
 
 
 def create_app():

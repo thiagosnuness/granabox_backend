@@ -43,46 +43,68 @@ The following technologies are used in the development of this backend:
 
 ### Prerequisites
 
-- **Python 3.x**: Make sure you have Python 3.x installed.
-- **Pip**: You need pip (Python package installer) to install dependencies.
-- **Virtual Environment (Optional but recommended)**: To manage dependencies in isolation.
+Before running the project, ensure you have the following installed:
+- [Docker](https://www.docker.com/)
+- [Docker Compose](https://docs.docker.com/compose/)
+- A modern web browser (Chrome, Firefox, etc.)
 
-### Steps
+### Option 1: Run as part of the full application (with frontend)
+
+This project is typically executed as part of the full GranaBox application using Docker Compose from the frontend repository.
 
 1. **Clone the repository**:
 
    ```bash
+   git clone https://github.com/thiagosnuness/granabox_frontend.git
    git clone https://github.com/thiagosnuness/granabox_backend.git
    ```
 
-2. **Navigate to the project folder**:
+2. **Navigate to the project folder** (which contains the `docker-compose.yml` file):
 
    ```bash
+   cd granabox_frontend
+   ```
+
+3. **Run the entire application (frontend + backend)** using Docker Compose:
+   
+   ```bash
+   docker-compose up --build
+   ```
+
+4. **Access the application**:
+
+   Open your browser and go to [http://localhost](http://localhost)
+
+   You will be redirected to the login page (via Auth0) and, after authentication, the dashboard will load.
+
+   You can explore all available backend endpoints via Swagger UI: [http://localhost:5000/openapi/](http://localhost:5000/openapi/)
+
+### Option 2: Run the backend API standalone with Docker
+
+You can also run the backend independently using Docker:
+
+1. **Clone the backend repository**:
+
+   ```bash
+   git clone https://github.com/thiagosnuness/granabox_backend.git
    cd granabox_backend
    ```
 
-3. **Create a virtual environment** (optional but recommended):
+2. **Build the Docker image**:
 
    ```bash
-   python -m venv env
-   source env/bin/activate  # For Linux/MacOS
-   .\env\Scripts\activate   # For Windows
+   docker build -t granabox-backend .
    ```
 
-4. **Install dependencies**:
+3. **Run the container**:
 
    ```bash
-   pip install -r requirements.txt
+   docker run -d -p 5000:5000 --name granabox-backend granabox-backend
    ```
 
-5. **Run the application**:
+4. **Access the backend API documentation**:
 
-   ```bash
-   python app.py
-   ```
-
-6. **Access the API documentation**:
-   Open your browser and go to `http://localhost:5000/openapi/` to explore the available endpoints via Swagger UI.
+   Visit [http://localhost:5000/openapi/](http://localhost:5000/openapi/)
 
 ## Contributing
 

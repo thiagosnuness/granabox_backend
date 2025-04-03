@@ -19,6 +19,7 @@ class Item(db.Model):
         due_status (str):The due status('VENCIDO', 'VENCE HOJE', 'A VENCER').
         transaction_date (datetime): The date and time when the item was
         created or last modified.
+        user_id (str): The Auth0 user ID (sub) who owns this item.
         label_id (int): Foreign key referencing the associated label.
         label (Label): Relationship to the Label model that categorizes item.
     """
@@ -37,6 +38,7 @@ class Item(db.Model):
     transaction_date = db.Column(
         db.DateTime, default=datetime.utcnow, nullable=False
     )
+    user_id = db.Column(db.String(100), nullable=False)
 
     # Foreign key to link Label and Item
     label_id = db.Column(db.Integer, db.ForeignKey("labels.id"))
@@ -50,7 +52,7 @@ class Item(db.Model):
             dict: The item attributes as a dictionary with keys 'id',
                   'recurrence_id', 'recurrence', 'months', 'type',
                   'description', 'amount', 'due_date', 'due_status',
-                  'transaction_date', and 'label'.
+                  'transaction_date', user_id, and 'label'.
         """
         return {
             "id": self.id,
@@ -65,6 +67,7 @@ class Item(db.Model):
             "transaction_date": self.transaction_date.strftime(
                 "%Y-%m-%d %H:%M:%S"
             ),
+            "user_id": self.user_id,
             "label": self.label.name if self.label else None,
             "label_id": self.label_id,
         }

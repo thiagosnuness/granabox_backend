@@ -5,6 +5,7 @@ import uuid
 
 from flask_openapi3 import Tag
 from flask import jsonify, request
+import jwt
 
 from app import app
 from api import db
@@ -89,6 +90,15 @@ def add_recurring_item(form: AddRecurringItemSchema):
     """
     # Fetch query parameters
     form = request.form
+
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
 
     # Check if all required parameters are present
     required_params = [
@@ -203,6 +213,7 @@ def add_recurring_item(form: AddRecurringItemSchema):
             months=i,
             recurrence_id=recurrence_id,
             transaction_date=utc_time,
+            user_id=user_id  # Link item to the authenticated user
         )
         db.session.add(new_item)
         items.append(new_item)
@@ -253,12 +264,25 @@ def get_recurring_items_by_recurrence_id(query: GetRecurringItemByIDSchema):
     by recurrence_id.
 
     Returns the item details if found, or an error if not.
+    Only returns items that belong to the authenticated user.
     """
     # Fetch query parameters
     query = request.args
     recurrence_id = query.get("recurrence_id")
 
-    recurring_items = Item.query.filter_by(recurrence_id=recurrence_id).all()
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+
+    # Filter by recurrence_id and user_id
+    recurring_items = Item.query.filter_by(
+        recurrence_id=recurrence_id, user_id=user_id
+    ).all()
 
     if not recurring_items:
         return (
@@ -317,6 +341,14 @@ def get_recurring_items_by_recurrence_id(query: GetRecurringItemByIDSchema):
                 }
             },
         },
+        "403": {
+            "description": "Access denied. Item does not belong to the user.",
+            "content": {
+                "application/json": {
+                    "schema": ValidationErrorSchema.model_json_schema()
+                }
+            },
+        },
         "404": {
             "description": "Item not found",
             "content": {
@@ -345,6 +377,15 @@ def edit_recurring_items(form: EditRecurringItemSchema):
     # Fetch query parameters
     form = request.form
 
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+
     # Fetch the item by ID from the query parameters (item_id is required)
     item_id = int(form.get("id"))
     item = Item.query.get(item_id)
@@ -358,6 +399,19 @@ def edit_recurring_items(form: EditRecurringItemSchema):
                 }
             ),
             404,
+        )
+    
+    # Ensure the item belongs to the authenticated user
+    if item.user_id != user_id:
+        return (
+            jsonify(
+                {
+                    "loc": ["user_id"],
+                    "msg": "Unauthorized to edit this recurring series",
+                    "type_": "access_denied",
+                }
+            ),
+            403,
         )
 
     if not item.recurrence_id:
@@ -454,6 +508,7 @@ def edit_recurring_items(form: EditRecurringItemSchema):
     future_items = Item.query.filter(
         Item.recurrence_id == item.recurrence_id,
         Item.due_date >= item.due_date,
+        Item.user_id == user_id
     ).all()
 
     for future_item in future_items:
@@ -501,6 +556,14 @@ def edit_recurring_items(form: EditRecurringItemSchema):
                 }
             },
         },
+        "403": {
+            "description": "Access denied. Item does not belong to the user.",
+            "content": {
+                "application/json": {
+                    "schema": ValidationErrorSchema.model_json_schema()
+                }
+            },
+        },
         "422": {
             "description": "Unprocessable Entity",
             "content": {
@@ -516,9 +579,20 @@ def remove_recurring_items(query: DeleteRecurringItemByIDSchema):
     Removes future recurring items based on the current item.
 
     Returns a success message if the item was removed.
+    Only allows deletion if the item belongs to the authenticated user.
     """
     # Fetch query parameters
     query = request.args
+
+    # Extract user_id (sub) from the token or fallback to 'public' for Swagger
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "")
+    try:
+        decoded_token = jwt.decode(token, options={"verify_signature": False})
+        user_id = decoded_token.get("sub", "public")
+    except Exception:
+        user_id = "public"
+
     # Fetch the item by ID from the query parameters (item_id is required)
     item_id = query.get("id")
     item = Item.query.get(item_id)
@@ -533,6 +607,19 @@ def remove_recurring_items(query: DeleteRecurringItemByIDSchema):
             ),
             404,
         )
+    
+    # Ensure the item belongs to the authenticated user
+    if item.user_id != user_id:
+        return (
+            jsonify(
+                {
+                    "loc": ["user_id"],
+                    "msg": "Unauthorized to delete this recurring series",
+                    "type_": "access_denied",
+                }
+            ),
+            403,
+        )
 
     if not item.recurrence_id:
         return (
@@ -546,10 +633,11 @@ def remove_recurring_items(query: DeleteRecurringItemByIDSchema):
             400,
         )
 
-    # Delete future recurring items
+    # Delete future recurring items that belong to the user
     future_items = Item.query.filter(
         Item.recurrence_id == item.recurrence_id,
         Item.due_date > item.due_date,
+        Item.user_id == user_id
     ).all()
 
     for future_item in future_items:
@@ -560,6 +648,7 @@ def remove_recurring_items(query: DeleteRecurringItemByIDSchema):
         Item.query.filter(
             Item.recurrence_id == item.recurrence_id,
             Item.due_date <= item.due_date,
+            Item.user_id == user_id
         )
         .order_by(Item.due_date)
         .all()
