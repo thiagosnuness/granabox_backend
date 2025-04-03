@@ -48,6 +48,20 @@ Before running the project, ensure you have the following installed:
 - [Docker Compose](https://docs.docker.com/compose/)
 - A modern web browser (Chrome, Firefox, etc.)
 
+**Important:** Before running the backend or (frontend + backend), you must create a `.env` file in the backend root directory with your Auth0 credentials.
+
+This file is **not included in the repository** for security reasons.
+
+Create a `.env` file containing:
+
+```env
+AUTH0_DOMAIN=your-auth0-domain.auth0.com
+AUTH0_CLIENT_ID=your-auth0-client-id
+AUTH0_AUDIENCE=your-auth0-api-audience
+```
+
+**Note:** The frontend does **not** require its own `.env` file with Auth0 credentials.
+
 ### Option 1: Run as part of the full application (with frontend)
 
 This project is typically executed as part of the full GranaBox application using Docker Compose from the frontend repository.
